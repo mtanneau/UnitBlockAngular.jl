@@ -1,0 +1,243 @@
+module UnitBlockAngular
+
+export UnitBlockAngularMatrix
+
+using LinearAlgebra
+
+# Base Interface
+import Base:
+    size, getindex
+
+import LinearAlgebra.mul!
+
+"""
+    UnitBlockAngularMatrix{Tv}
+
+Unit block-angular matrix.
+
+A unit block-angular matrix is a matrix of the form
+```
+A = [ B0  B1  B2  ...  Br ]
+    |  0  e'              |
+    |  0      e'          |
+    |  0          ...     |
+    [  0               e' ]
+```
+where `Bk` has size `m x nk`.
+"""
+struct UnitBlockAngularMatrix{Tv<:Real} <: AbstractMatrix{Tv}
+
+    m0::Int  # number of linking constraints
+    n0::Int  # Number of linking columns
+    n::Int   # number of non-linking columns
+
+    M::Int  # Total number of constraints
+    N::Int  # Total number of columns
+    R::Int  # Number of blocks
+
+    B0::Matrix{Tv}         # Linking block
+    B::Matrix{Tv}          # Lower blocks, concatenated
+    blockidx::Vector{Int}  # Block index of each column in `B`
+
+    function UnitBlockAngularMatrix(
+        B0::AbstractMatrix{Tv},
+        B::AbstractMatrix{Tv},
+        R::Int, blockidx::Vector{Int}
+    ) where{Tv<:Real}
+
+        # Sanity checks
+        m, n = size(B)
+        m0, n0 = size(B0)
+        m == m0 || throw(DimensionMismatch(
+            "B has $m rows, but B0 has $(m0)"
+        ))
+        n == length(blockidx) || throw(DimensionMismatch(
+            "B has $n columns, but blockidx has $(length(blockidx))"
+        ))
+
+        if n > 0
+            imin, imax = extrema(blockidx[1:n])
+            (0 <= imin <= imax <= R) || throw(DimensionMismatch(
+                "Specified $R blocks but indices are in range [$imin, $imax]"
+            ))
+        end
+
+        A = new{Tv}(m0, n0, n, m0 + R, n0+n, R,
+            Matrix{Tv}(undef, m0, n0),
+            Matrix{Tv}(undef, m, n),
+            Vector{Int}(undef, n)
+        )
+
+        A.B0 .= B0
+        A.B  .= B
+        A.blockidx .= blockidx
+        return A
+    end
+
+    function UnitBlockAngularMatrix{Tv}(m0, n0, n, R) where{Tv<:Real}
+        return new{Tv}(m0, n0, n, m0+R, n0+n, R, Matrix{Tv}(undef, m0, n0), Matrix{Tv}(undef, m0, n), Vector{Int}(undef, n))
+    end
+end
+
+# Outer constructors
+# TODO: remove them
+function UnitBlockAngularMatrix(blocks::Vector{Matrix{Tv}}, B0::AbstractMatrix{Tv}) where Tv<:Real
+    R = length(blocks)
+    (m, n0) = size(B0)
+
+    if R == 0
+        return UnitBlockAngularMatrix(zeros(Tv, m, 0), R, Int[], B0)
+    end
+    
+    B = hcat(blocks...)  # TODO: remove hcat, allocate B at once
+    n = size(B, 2)
+
+    blockidx = ones(Int64, n)
+
+    # Sanity checks
+    k = 1
+    for r in Base.OneTo(R)
+        n_ = size(blocks[r], 2)
+        blockidx[k:(k+n_-1)] .= r
+        k += n_
+    end
+
+    return UnitBlockAngularMatrix(B, R, blockidx, B0)
+end
+
+function UnitBlockAngularMatrix(blocks::Vector{Matrix{Tv}}) where Tv<:Real
+    if length(blocks) == 0
+        return UnitBlockAngularMatrix(blocks, zeros(Tv, 0, 0))
+    else
+        return UnitBlockAngularMatrix(blocks, zeros(Tv, size(blocks[1], 1), 0))
+    end
+end
+
+# Base matrix interface
+size(A::UnitBlockAngularMatrix) = (A.M, A.N)
+
+function getindex(A::UnitBlockAngularMatrix{Tv}, i::Integer, j::Integer) where Tv<:Real
+    
+    # Sanity check
+    ((1 <= i <= A.M) && (1 <= j <= A.N)) || throw(BoundsError())
+ 
+    if (i <= A.m0) && (j <= A.n0)
+        # Element is in linking block
+        return A.B0[i, j]
+    
+    elseif (i <= A.m0) && (j > A.n0)
+        # Element is in regular block
+        return A.B[i, j-A.n0]
+    
+    elseif (i > A.m0) && (j <= A.n0)
+        return zero(Tv)
+    
+    elseif (i > A.m0) && (j > A.n0)
+        # Check if column j belongs to block i
+        if A.blockidx[j-A.n0] == i - A.m0
+            return oneunit(Tv)
+        else
+            return zero(Tv)
+        end
+    end 
+end
+
+# copy(A::UnitBlockAngularMatrix) = UnitBlockAngularMatrix(A.n, A.B, A.R, A.blockidx, A.B0)
+
+#=
+"""
+    sparse(A)
+
+Efficient convertion to sparse matrix
+"""
+function sparse(A::UnitBlockAngularMatrix{Tv}) where Tv<:Real
+    
+    @views A_ = hcat(
+        vcat(spzeros(A.R, A.n0), A.B0),
+        vcat(
+            sparse(A.blockidx[1:A.n], collect(1:A.n), ones(A.n), A.R, A.n),
+            A.B[:, 1:A.n]
+        )
+    )
+    return A_
+end
+=#
+
+# Matrix-vector products
+function LinearAlgebra.mul!(
+    y::AbstractVector{Tv},
+    A::UnitBlockAngularMatrix{Tv},
+    x::AbstractVector{Tv},
+    α::Tv, β::Tv
+) where{Tv<:Real}
+    # Dimensions checks
+    m, n = size(A)
+    n == length(x) || throw(DimensionMismatch("A has size $((m, n)) but x has length $(length(x))"))
+    m == length(y) || throw(DimensionMismatch("A has size $((m, n)) but y has length $(length(y))"))
+    
+    # Compute `y0 = α * A * x + β * y0`
+    # `y0 = α * B0 * x0 + α B * [x1 ... xR] + β y0`
+    @views x0 = x[1:A.n0]
+    @views x1 = x[(A.n0+1):end]
+    @views y0 = y[1:A.m0]
+    @views y1 = y[(A.m0+1):end]
+    mul!(y0, A.B0, x0, α, β)
+    mul!(y0, A.B, x1, α,  one(Tv))
+
+    # Compute the remaining part
+    y1 .*= β
+    @inbounds for (j, xj) in zip(A.blockidx, x1)
+        y1[j] += α * xj
+    end
+
+    return y
+end
+
+mul!(y::AbstractVector{Tv}, A::UnitBlockAngularMatrix{Tv}, x::AbstractVector{Tv}) where{Tv<:Real} = mul!(y, A, x, one(Tv), zero(Tv))
+
+function mul!(
+    x::AbstractVector{Tv},
+    At::Union{
+        LinearAlgebra.Transpose{Tv, UnitBlockAngularMatrix{Tv}},
+        LinearAlgebra.Adjoint{Tv, UnitBlockAngularMatrix{Tv}}
+    },
+    y::AbstractVector{Tv},
+    α::Tv,
+    β::Tv
+) where{Tv<:Real}
+    A = At.parent
+
+    m, n = size(A)
+    n == length(x) || throw(DimensionMismatch(
+        "A has size $(size(A)) but x has size $(length(x))")
+    )
+    m == length(y) || throw(DimensionMismatch(
+        "A has size $(size(A)) but y has size $(length(y))")
+    )
+
+    # `x = B' * y0`
+    @views x0 = x[1:A.n0]
+    @views x1 = x[(A.n0+1):end]
+    @views y0 = y[1:A.m0]
+    @views y1 = y[(A.m0+1):end]
+    mul!(x0, A.B0', y0, α, β)
+    mul!(x1, A.B' , y0, α, β)
+
+    # `∀i, x[i] += y[blockidx[i]]`
+    @inbounds for (i, j) in enumerate(A.blockidx)
+        x1[i] += α * y1[j]
+    end
+
+    return x
+end
+
+mul!(
+    x::AbstractVector{Tv},
+    At::Union{
+        LinearAlgebra.Transpose{Tv, UnitBlockAngularMatrix{Tv}},
+        LinearAlgebra.Adjoint{Tv, UnitBlockAngularMatrix{Tv}}
+    },
+    y::AbstractVector{Tv}
+) where{Tv<:Real} = mul!(x, At, y, one(Tv), zero(Tv))
+
+end # module
