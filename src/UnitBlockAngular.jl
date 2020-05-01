@@ -1,6 +1,6 @@
 module UnitBlockAngular
 
-export UnitBlockAngularMatrix
+export UnitBlockAngularMatrix, UnitBlockAngularFactor
 
 using LinearAlgebra
 
@@ -79,40 +79,6 @@ struct UnitBlockAngularMatrix{Tv<:Real} <: AbstractMatrix{Tv}
     end
 end
 
-# Outer constructors
-# TODO: remove them
-function UnitBlockAngularMatrix(blocks::Vector{Matrix{Tv}}, B0::AbstractMatrix{Tv}) where Tv<:Real
-    R = length(blocks)
-    (m, n0) = size(B0)
-
-    if R == 0
-        return UnitBlockAngularMatrix(zeros(Tv, m, 0), R, Int[], B0)
-    end
-    
-    B = hcat(blocks...)  # TODO: remove hcat, allocate B at once
-    n = size(B, 2)
-
-    blockidx = ones(Int64, n)
-
-    # Sanity checks
-    k = 1
-    for r in Base.OneTo(R)
-        n_ = size(blocks[r], 2)
-        blockidx[k:(k+n_-1)] .= r
-        k += n_
-    end
-
-    return UnitBlockAngularMatrix(B, R, blockidx, B0)
-end
-
-function UnitBlockAngularMatrix(blocks::Vector{Matrix{Tv}}) where Tv<:Real
-    if length(blocks) == 0
-        return UnitBlockAngularMatrix(blocks, zeros(Tv, 0, 0))
-    else
-        return UnitBlockAngularMatrix(blocks, zeros(Tv, size(blocks[1], 1), 0))
-    end
-end
-
 # Base matrix interface
 size(A::UnitBlockAngularMatrix) = (A.M, A.N)
 
@@ -141,27 +107,6 @@ function getindex(A::UnitBlockAngularMatrix{Tv}, i::Integer, j::Integer) where T
         end
     end 
 end
-
-# copy(A::UnitBlockAngularMatrix) = UnitBlockAngularMatrix(A.n, A.B, A.R, A.blockidx, A.B0)
-
-#=
-"""
-    sparse(A)
-
-Efficient convertion to sparse matrix
-"""
-function sparse(A::UnitBlockAngularMatrix{Tv}) where Tv<:Real
-    
-    @views A_ = hcat(
-        vcat(spzeros(A.R, A.n0), A.B0),
-        vcat(
-            sparse(A.blockidx[1:A.n], collect(1:A.n), ones(A.n), A.R, A.n),
-            A.B[:, 1:A.n]
-        )
-    )
-    return A_
-end
-=#
 
 # Matrix-vector products
 function LinearAlgebra.mul!(
@@ -239,5 +184,7 @@ mul!(
     },
     y::AbstractVector{Tv}
 ) where{Tv<:Real} = mul!(x, At, y, one(Tv), zero(Tv))
+
+include("linear_solver.jl")
 
 end # module

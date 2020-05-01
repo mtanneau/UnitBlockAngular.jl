@@ -55,7 +55,7 @@ y, yref = zeros(m0 + R), zeros(m0 + R)
     @test y ≈ yref
 end
 
-# TODO: factorization
-
-
 end  # testset
+
+# Factorization
+include("linear_solver.jl")
