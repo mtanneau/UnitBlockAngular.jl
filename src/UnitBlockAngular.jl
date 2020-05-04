@@ -122,6 +122,10 @@ function LinearAlgebra.mul!(
     
     # Compute `y0 = α * A * x + β * y0`
     # `y0 = α * B0 * x0 + α B * [x1 ... xR] + β y0`
+    if iszero(β)
+        y .= zero(Tv)
+    end
+
     @views x0 = x[1:A.n0]
     @views x1 = x[(A.n0+1):end]
     @views y0 = y[1:A.m0]
@@ -184,6 +188,45 @@ mul!(
     },
     y::AbstractVector{Tv}
 ) where{Tv<:Real} = mul!(x, At, y, one(Tv), zero(Tv))
+
+import Tulip.TLA.construct_matrix
+
+function construct_matrix(
+    ::Type{UnitBlockAngularMatrix}, M::Int, N::Int,
+    aI::Vector{Int}, aJ::Vector{Int}, aV::Vector{Tv};
+    m0::Int, n0::Int, n::Int, R::Int
+) where{Tv<:Real}
+    A = UnitBlockAngularMatrix{Tv}(m0, n0, n, R)
+    A.B .= 0
+    A.B0 .= 0
+    A.blockidx .= 0
+    # TODO: may be more efficient to first sort indices so that
+    # A is accessed in column-major order.
+    for(i, j, v) in zip(aI, aJ, aV)
+        if 1 <= i <= m0
+            # Linking constraints
+            if 1 <= j <= n0
+                # Update B0
+                A.B0[i, j] = v
+            elseif n0 < j <= n0 + n
+                # Update B
+                A.B[i, j - n0] = v
+            else
+                error("Invalid column index $j")
+            end
+        elseif m0 < i <= m0 + R
+            # Convexity constraint
+            n0 < j || error("Non-zero coefficient ($i, $j) (should be zero)")
+            isone(v) || error("Invalid coefficient A[$i, $j]=$v (should be one)")
+
+            A.blockidx[j - n0] = i - m0
+        else
+            error("Invalid row index $i in matrix with $m0 linking and $R convexity constraints")
+        end
+    end
+    return A
+end
+
 
 include("linear_solver.jl")
 

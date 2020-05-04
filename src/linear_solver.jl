@@ -9,7 +9,7 @@ import LinearAlgebra.LAPACK
 
 
 """
-struct UnitBlockAngularFactor{Tv<:Real} <: Tulip.TLA.AbstractLinearSolver{Tv}
+struct UnitBlockAngularFactor{Tv<:Real} <: Tulip.KKT.AbstractKKTSolver{Tv}
     
     A::UnitBlockAngularMatrix{Tv}
 
@@ -35,7 +35,10 @@ struct UnitBlockAngularFactor{Tv<:Real} <: Tulip.TLA.AbstractLinearSolver{Tv}
     end
 end
 
-function Tulip.TLA.update_linear_solver!(
+Tulip.KKT.backend(::UnitBlockAngularFactor) = "UnitBlockAngular"
+Tulip.KKT.linear_system(::UnitBlockAngularFactor) = "Normal equations"
+
+function Tulip.KKT.update!(
     ls::UnitBlockAngularFactor{Tv},
     θ::AbstractVector{Tv},
     regP::AbstractVector{Tv},
@@ -53,9 +56,7 @@ function Tulip.TLA.update_linear_solver!(
     ls.regD .= regD
 
     # I. Compute normal equations
-
-    # I.1 - Schur complement
-    # Φ = Σ Bi * Θi * Bi'
+    # I.1 - Schur complement `Φ = Σ Bi * Θi * Bi'`
     θ_ = one(Tv) ./ (ls.θ .+ ls.regP)
 
     # Linking block
@@ -88,9 +89,6 @@ function Tulip.TLA.update_linear_solver!(
     end
 
     # I.3 Apply dual regularizations
-    @inbounds for i in 1:m0
-        ls.C[i, i] += ls.regD[i]
-    end
     ls.D .+= ls.regD[(ls.A.m0+1):end]
 
     
@@ -100,13 +98,17 @@ function Tulip.TLA.update_linear_solver!(
     BLAS.syrk!('U', 'N', -one(Tv), ls._L, one(Tv), ls.C)  # C -= (Di)⁻¹ (Biθi) (Biθi)'
     
     # 6. Factorize C
+    # Dual regularizations on C
+    @inbounds for i in 1:m0
+        ls.C[i, i] += ls.regD[i]
+    end
     LAPACK.potrf!('U', ls.C)
 
     # Done
     return nothing
 end
 
-function Tulip.TLA.solve_augmented_system!(
+function Tulip.KKT.solve!(
     dx, dy,
     ls::UnitBlockAngularFactor{Tv},
     ξp, ξd
@@ -116,7 +118,8 @@ function Tulip.TLA.solve_augmented_system!(
     # TODO: dimension checks
 
     # 1. Setup right-hand side for normal equations
-    dy .= ξp .+ ls.A * (ξd ./ (ls.θ .+ ls.regP))
+    dy .= ξp 
+    mul!(dy, ls.A, ξd ./ (ls.θ .+ ls.regP), one(Tv), one(Tv))
     @views dy0 = dy[1:m0]
     @views dy1 = dy[(m0+1):end]
 
