@@ -34,7 +34,7 @@ using SparseArrays
     ξd = ones(N)
     Tulip.KKT.solve!(dx, dy, ls, ξp, ξd)
 
-    lsref = Tulip.KKT.KKTSolver_Dense(Aref)
+    lsref = Tulip.KKT.Dense_SymPosDef(Aref)
     Tulip.KKT.update!(lsref, θ, regP, regD)
     dxref = zeros(N)
     dyref = zeros(M)
@@ -68,8 +68,8 @@ end
     m.params.OutputLevel = 1
     m.params.Presolve = 0
 
-    m.params.MatrixFactory = Tulip.TLA.MatrixFactory(UnitBlockAngularMatrix; m0=m0, n0=n0, n=n, R=R)
-    m.params.KKTFactory = Tulip.KKT.SolverFactory(UnitBlockAngularFactor)
+    m.params.MatrixOptions = Tulip.TLA.MatrixOptions(UnitBlockAngularMatrix; m0=m0, n0=n0, n=n, R=R)
+    m.params.KKTOptions = Tulip.KKT.SolverOptions(UnitBlockAngularFactor)
     Tulip.load_problem!(m.pbdata, "Test", true, obj, 0.0, Aref, lcon, ucon, lvar, uvar, connames, varnames)
     Tulip.optimize!(m)
 end
