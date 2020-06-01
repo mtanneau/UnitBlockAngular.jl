@@ -123,6 +123,8 @@ function LinearAlgebra.mul!(
     # Compute `y0 = α * A * x + β * y0`
     # `y0 = α * B0 * x0 + α B * [x1 ... xR] + β y0`
     if iszero(β)
+        # We do this explicity in case `y` has not been initialized
+        # Otherwise, we may have some NaN values going around
         y .= zero(Tv)
     end
 
